@@ -12,7 +12,11 @@ def get_steam_game_price(app_id, currency_code='us'):
     Returns:
         dict: A dictionary containing the game's price details, or None if the request fails.
     """
-    url = f"https://store.steampowered.com{app_id}&cc={currency_code}&filters=price_overview"
+    url = (
+        f"https://store.steampowered.com/api/appdetails"
+        f"?appids={app_id}&cc={currency_code}&filters=price_overview"
+    )
+
     
     try:
         response = requests.get(url)
