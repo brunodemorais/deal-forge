@@ -152,7 +152,7 @@ def collect_prices(app_ids, currency='us'):
             print(f"{'─'*70}\n")
         
         # Wait between requests to avoid rate limiting
-        time.sleep(2)
+        time.sleep(1)
     
     # Final summary
     elapsed_total = (datetime.now() - start_time).total_seconds()
