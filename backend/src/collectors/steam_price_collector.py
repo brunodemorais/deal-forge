@@ -4,6 +4,7 @@ import psycopg2
 from datetime import datetime
 import os
 import sys
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -107,24 +108,63 @@ def save_price_to_db(app_id, game_name, price_data, currency):
         conn.close()
 
 def collect_prices(app_ids, currency='us'):
-    """Collect prices for multiple games"""
-    print(f"\n🎮 Starting price collection for {len(app_ids)} games...")
-    print(f"⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    """Collect prices for multiple games with progress tracking"""
+    total_games = len(app_ids)
+    print(f"\n🎮 Starting price collection for {total_games} games...")
+    print(f"⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*70}\n")
     
     successful = 0
     failed = 0
+    start_time = datetime.now()
     
-    for app_id in app_ids:
+    for idx, app_id in enumerate(app_ids, 1):
+        print(f"[{idx}/{total_games}] Processing App ID {app_id}...", end=" ")
+        
         game_data = get_steam_game_price(app_id, currency)
         if game_data:
             game_name = game_data.get('name', 'Unknown')
             price_data = game_data.get('price_overview')
             save_price_to_db(app_id, game_name, price_data, currency)
             successful += 1
+            
+            # Print success info
+            if price_data:
+                final_price = price_data.get('final', 0) / 100
+                discount = price_data.get('discount_percent', 0)
+                print(f"✓ {game_name} - ${final_price:.2f} ({discount}% off)")
+            else:
+                print(f"✓ {game_name} (Free to play)")
         else:
             failed += 1
+            print(f"✗ Failed")
+        
+        # Progress summary every 50 games
+        if idx % 50 == 0:
+            elapsed = (datetime.now() - start_time).total_seconds()
+            avg_time = elapsed / idx
+            remaining = (total_games - idx) * avg_time
+            
+            print(f"\n{'─'*70}")
+            print(f"📊 Progress: {idx}/{total_games} ({idx/total_games*100:.1f}%)")
+            print(f"✅ Successful: {successful} | ❌ Failed: {failed}")
+            print(f"⏱️  Avg time per game: {avg_time:.1f}s | Est. remaining: {remaining/60:.1f} min")
+            print(f"{'─'*70}\n")
+        
+        # Wait between requests to avoid rate limiting
+        time.sleep(2)
     
-    print(f"\n✅ Complete: {successful} successful, {failed} failed")
+    # Final summary
+    elapsed_total = (datetime.now() - start_time).total_seconds()
+    print(f"\n{'='*70}")
+    print(f"✅ COLLECTION COMPLETE")
+    print(f"{'='*70}")
+    print(f"Total games processed: {total_games}")
+    print(f"Successful: {successful} ({successful/total_games*100:.1f}%)")
+    print(f"Failed: {failed} ({failed/total_games*100:.1f}%)")
+    print(f"Total time: {elapsed_total/60:.1f} minutes")
+    print(f"Average: {elapsed_total/total_games:.1f} seconds per game")
+    print(f"{'='*70}\n")
 
 if __name__ == "__main__":
     # Import the function to get tracked games
