@@ -127,17 +127,20 @@ def collect_prices(app_ids, currency='us'):
     print(f"\n✅ Complete: {successful} successful, {failed} failed")
 
 if __name__ == "__main__":
-    # List of game App IDs you want to track
-    games_to_track = [
-        292030,   # The Witcher 3: Wild Hunt
-        1091500,  # Cyberpunk 2077
-        271590,   # Grand Theft Auto V
-        570,      # Dota 2 (free)
-        730,      # Counter-Strike 2 (free)
-        # Add more game IDs here
-    ]
+    # Import the function to get tracked games
+    try:
+        from game_list_manager import get_tracked_game_ids
+        games_to_track = get_tracked_game_ids()
+    except Exception as e:
+        print(f"❌ Could not load tracked games: {e}")
+        print("Using fallback list...")
+        games_to_track = [292030, 1091500, 271590]  # Fallback
     
-    # You can also specify currency
+    if not games_to_track:
+        print("⚠️  No games to track. Run game_list_manager.py first.")
+        sys.exit(0)
+    
+    print(f"📊 Tracking {len(games_to_track)} games")
+    
     currency = os.getenv("CURRENCY", "us")
-    
     collect_prices(games_to_track, currency)
