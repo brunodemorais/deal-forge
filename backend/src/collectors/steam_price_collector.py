@@ -26,17 +26,28 @@ def get_db_connection():
         sys.exit(1)
 
 def get_steam_game_price(app_id, currency_code='us'):
-    """Fetches the price of a Steam game in a specific currency."""
+    """
+    Fetches the price and name of a Steam game in a specific currency.
+    
+    Args:
+        app_id (int or str): The Steam App ID of the game.
+        currency_code (str): The two-letter country code for the currency (e.g., 'us' for USD).
+        
+    Returns:
+        dict: A dictionary containing the game's data, or None if the request fails.
+    """
     url = (
         f"https://store.steampowered.com/api/appdetails"
-        f"?appids={app_id}&cc={currency_code}&filters=price_overview,name"
+        f"?appids={app_id}&cc={currency_code}"
     )
     
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
+        
         data = response.json()
         
+        # Check if the request was successful and contains data
         if data and data[str(app_id)]['success']:
             return data[str(app_id)]['data']
         else:
@@ -46,8 +57,11 @@ def get_steam_game_price(app_id, currency_code='us'):
     except requests.exceptions.Timeout:
         print(f"⚠️  Timeout fetching data for App ID {app_id}")
         return None
-    except Exception as e:
-        print(f"❌ Error fetching data for {app_id}: {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"❌ An error occurred during the request: {e}")
+        return None
+    except (KeyError, json.JSONDecodeError) as e:
+        print(f"❌ Could not parse data from the response: {e}")
         return None
 
 def save_price_to_db(app_id, game_name, price_data, currency):
