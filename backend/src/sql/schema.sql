@@ -23,8 +23,23 @@ CREATE TABLE IF NOT EXISTS games (
     developers JSONB
 );
 
--- Create index for faster queries
+-- Price history table to track prices over time
+CREATE TABLE IF NOT EXISTS price_history (
+    id SERIAL PRIMARY KEY,
+    app_id INTEGER REFERENCES games(app_id),
+    currency VARCHAR(10),
+    initial_price INTEGER,
+    final_price INTEGER,
+    discount_percent INTEGER,
+    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indexes AFTER tables are created
 CREATE INDEX IF NOT EXISTS idx_app_id_checked ON price_history(app_id, checked_at);
+CREATE INDEX IF NOT EXISTS idx_games_release_date ON games(release_date);
+CREATE INDEX IF NOT EXISTS idx_games_metacritic_score ON games(metacritic_score);
+CREATE INDEX IF NOT EXISTS idx_games_recommendation_count ON games(recommendation_count);
+CREATE INDEX IF NOT EXISTS idx_games_genres ON games USING GIN (genres);
 
 -- Table to track which games we're monitoring
 CREATE TABLE IF NOT EXISTS games_to_track (
