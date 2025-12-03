@@ -146,11 +146,13 @@ def filter_and_add_games(app_ids):
                 SET last_seen_in_top = CURRENT_TIMESTAMP
             """, (app_id, details['is_free']))
             
-            # Also add to games table with name
+            # Add basic info to games table (full details will be collected by price collector)
             cur.execute("""
-                INSERT INTO games (app_id, name)
-                VALUES (%s, %s)
-                ON CONFLICT (app_id) DO UPDATE SET name = EXCLUDED.name
+                INSERT INTO games (app_id, name, last_updated)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (app_id) DO UPDATE SET 
+                    name = EXCLUDED.name,
+                    last_updated = CURRENT_TIMESTAMP
             """, (app_id, details['name']))
             
             conn.commit()

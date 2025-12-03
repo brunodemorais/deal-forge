@@ -26,60 +26,77 @@ def get_db_connection():
         print(f"❌ Database connection failed: {e}")
         sys.exit(1)
 
-def get_steam_game_price(app_id, currency_code='us'):
+def get_steam_game_price(app_id, currency_code='us', max_retries=5):
     """
     Fetches the price and name of a Steam game in a specific currency.
+    Implements exponential backoff for rate limiting.
     
     Args:
         app_id (int or str): The Steam App ID of the game.
         currency_code (str): The two-letter country code for the currency (e.g., 'us' for USD).
+        max_retries (int): Maximum number of retry attempts for rate limiting.
         
     Returns:
         dict: A dictionary containing the game's data, or None if the request fails.
     """
-    url = (
-        f"https://store.steampowered.com/api/appdetails"
-        f"?appids={app_id}&cc={currency_code}"
-    )
+    url = f"https://store.steampowered.com/api/appdetails?appids={app_id}&cc={currency_code}"
     
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        
-        # Check if the request was successful and contains data
-        if data and data[str(app_id)]['success']:
-            return data[str(app_id)]['data']
-        else:
-            print(f"⚠️  No data available for App ID {app_id}")
-            return None
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, timeout=10)
             
-    except requests.exceptions.Timeout:
-        print(f"⚠️  Timeout fetching data for App ID {app_id}")
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"❌ An error occurred during the request: {e}")
-        return None
-    except (KeyError, json.JSONDecodeError) as e:
-        print(f"❌ Could not parse data from the response: {e}")
-        return None
+            # If rate limited, wait and retry with exponential backoff
+            if response.status_code == 429:
+                wait_time = (2 ** attempt) * 5  # 5, 10, 20, 40, 80 seconds
+                print(f"⚠️  Rate limited! Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                time.sleep(wait_time)
+                continue
+            
+            response.raise_for_status()
+            data = response.json()
+            
+            # Check if the request was successful and contains data
+            if data and data[str(app_id)]['success']:
+                return data[str(app_id)]['data']
+            else:
+                print(f"⚠️  No data available for App ID {app_id}")
+                return None
+                
+        except requests.exceptions.Timeout:
+            print(f"⚠️  Timeout fetching data for App ID {app_id}")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+            return None
+        except requests.exceptions.RequestException as e:
+            if "429" in str(e):
+                wait_time = (2 ** attempt) * 5
+                print(f"⚠️  Rate limited! Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                time.sleep(wait_time)
+                continue
+            print(f"❌ An error occurred during the request: {e}")
+            return None
+        except (KeyError, json.JSONDecodeError) as e:
+            print(f"❌ Could not parse data from the response: {e}")
+            return None
+    
+    print(f"❌ Max retries exceeded for App ID {app_id}")
+    return None
 
-def save_price_to_db(app_id, game_name, price_data, currency):
-    """Save price data to the database"""
+def save_price_to_db(app_id, game_data, currency):
+    """Save price data and game details to the database"""
+    # First, save comprehensive game details
+    save_game_details_to_db(app_id, game_data)
+    
+    # Then save price history
     conn = get_db_connection()
     cur = conn.cursor()
     
     try:
-        # Insert or update game info
-        cur.execute("""
-            INSERT INTO games (app_id, name) 
-            VALUES (%s, %s)
-            ON CONFLICT (app_id) DO UPDATE SET name = EXCLUDED.name
-        """, (app_id, game_name))
+        price_data = game_data.get('price_overview')
         
-        # Insert price history
-        if price_data:  # If game has price (not free-to-play)
+        # Insert price history if game has pricing
+        if price_data:
             cur.execute("""
                 INSERT INTO price_history 
                 (app_id, currency, initial_price, final_price, discount_percent)
@@ -92,16 +109,91 @@ def save_price_to_db(app_id, game_name, price_data, currency):
                 price_data.get('discount_percent', 0)
             ))
             
-            final_price = price_data.get('final', 0) / 100
-            discount = price_data.get('discount_percent', 0)
-            print(f"✓ Saved: {game_name} - ${final_price:.2f} ({discount}% off)")
-        else:
-            print(f"✓ Saved: {game_name} (Free to play)")
+            conn.commit()
+        
+    except Exception as e:
+        print(f"❌ Database error saving price for App ID {app_id}: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()
+
+def save_game_details_to_db(app_id, game_data):
+    """Save comprehensive game details to database"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    try:
+        # Parse release date
+        release_date_str = game_data.get('release_date', {}).get('date')
+        release_date = None
+        if release_date_str and not game_data.get('release_date', {}).get('coming_soon', False):
+            try:
+                # Try common date formats
+                for fmt in ['%b %d, %Y', '%d %b, %Y', '%Y']:
+                    try:
+                        release_date = datetime.strptime(release_date_str, fmt).date()
+                        break
+                    except:
+                        continue
+            except:
+                pass
+        
+        # Extract data with safe defaults
+        name = game_data.get('name', 'Unknown')
+        short_desc = game_data.get('short_description', '')
+        header_image = game_data.get('header_image', '')
+        
+        metacritic = game_data.get('metacritic', {}).get('score')
+        recommendations = game_data.get('recommendations', {}).get('total', 0)
+        
+        # Platforms
+        platforms = game_data.get('platforms', {})
+        platform_windows = platforms.get('windows', False)
+        platform_mac = platforms.get('mac', False)
+        platform_linux = platforms.get('linux', False)
+        
+        # JSON fields - convert to JSON strings
+        genres = json.dumps(game_data.get('genres', []))
+        publishers = json.dumps(game_data.get('publishers', []))
+        developers = json.dumps(game_data.get('developers', []))
+        
+        # Insert or update
+        cur.execute("""
+            INSERT INTO games (
+                app_id, name, short_description, header_image_url,
+                release_date, metacritic_score, recommendation_count,
+                platform_windows, platform_mac, platform_linux,
+                genres, publishers, developers,
+                added_at, last_updated
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (app_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                short_description = EXCLUDED.short_description,
+                header_image_url = EXCLUDED.header_image_url,
+                release_date = EXCLUDED.release_date,
+                metacritic_score = EXCLUDED.metacritic_score,
+                recommendation_count = EXCLUDED.recommendation_count,
+                platform_windows = EXCLUDED.platform_windows,
+                platform_mac = EXCLUDED.platform_mac,
+                platform_linux = EXCLUDED.platform_linux,
+                genres = EXCLUDED.genres,
+                publishers = EXCLUDED.publishers,
+                developers = EXCLUDED.developers,
+                last_updated = CURRENT_TIMESTAMP
+        """, (
+            app_id, name, short_desc, header_image,
+            release_date, metacritic, recommendations,
+            platform_windows, platform_mac, platform_linux,
+            genres, publishers, developers
+        ))
         
         conn.commit()
         
     except Exception as e:
-        print(f"❌ Database error for {game_name}: {e}")
+        print(f"❌ Error saving game details for App ID {app_id}: {e}")
         conn.rollback()
     finally:
         cur.close()
@@ -124,11 +216,13 @@ def collect_prices(app_ids, currency='us'):
         game_data = get_steam_game_price(app_id, currency)
         if game_data:
             game_name = game_data.get('name', 'Unknown')
-            price_data = game_data.get('price_overview')
-            save_price_to_db(app_id, game_name, price_data, currency)
+            
+            # Save both game details and price
+            save_price_to_db(app_id, game_data, currency)
             successful += 1
             
             # Print success info
+            price_data = game_data.get('price_overview')
             if price_data:
                 final_price = price_data.get('final', 0) / 100
                 discount = price_data.get('discount_percent', 0)
@@ -152,7 +246,7 @@ def collect_prices(app_ids, currency='us'):
             print(f"{'─'*70}\n")
         
         # Wait between requests to avoid rate limiting
-        time.sleep(1)
+        time.sleep(3)
     
     # Final summary
     elapsed_total = (datetime.now() - start_time).total_seconds()

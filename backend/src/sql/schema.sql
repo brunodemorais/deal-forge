@@ -1,19 +1,26 @@
--- Games table to store basic game information
+-- Enhanced games table with high-value fields
 CREATE TABLE IF NOT EXISTS games (
     app_id INTEGER PRIMARY KEY,
     name VARCHAR(255),
-    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Price history table to track prices over time
-CREATE TABLE IF NOT EXISTS price_history (
-    id SERIAL PRIMARY KEY,
-    app_id INTEGER REFERENCES games(app_id),
-    currency VARCHAR(10),
-    initial_price INTEGER,
-    final_price INTEGER,
-    discount_percent INTEGER,
-    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    short_description TEXT,
+    header_image_url TEXT,
+    release_date DATE,
+    metacritic_score INTEGER,
+    recommendation_count INTEGER,
+    
+    -- Platform support
+    platform_windows BOOLEAN DEFAULT FALSE,
+    platform_mac BOOLEAN DEFAULT FALSE,
+    platform_linux BOOLEAN DEFAULT FALSE,
+    
+    -- Metadata
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Store as JSON for flexibility
+    genres JSONB,
+    publishers JSONB,
+    developers JSONB
 );
 
 -- Create index for faster queries
