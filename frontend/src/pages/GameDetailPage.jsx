@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet';
 import { motion } from 'framer-motion';
@@ -12,27 +12,48 @@ import {
   Calendar,
   Users,
   Tag,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import PriceChart from '@/components/PriceChart';
-import { mockGames, generatePriceHistory, mockRetailers } from '@/lib/mockData';
+import { mockRetailers } from '@/lib/mockData';
 import { useToast } from '@/components/ui/use-toast';
+import { apiClient } from '@/lib/api/client';
 
 const GameDetailPage = () => {
   const { gameId } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const [game, setGame] = useState(null);
+  const [priceHistory, setPriceHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const game = useMemo(() => {
-    return mockGames.find(g => g.id === gameId);
+  useEffect(() => {
+    const fetchGameData = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [gameData, historyData] = await Promise.all([
+          apiClient.getGameDetails(gameId),
+          apiClient.getPriceHistory(gameId),
+        ]);
+        setGame(gameData);
+        setPriceHistory(historyData);
+      } catch (err) {
+        console.error('Error fetching game data:', err);
+        setError(err.message || 'Failed to load game details');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (gameId) {
+      fetchGameData();
+    }
   }, [gameId]);
 
-  const priceHistory = useMemo(() => {
-    if (!game) return [];
-    return generatePriceHistory(game.id, game.current_price, game.historical_low);
-  }, [game]);
-
-  const retailers = useMemo(() => {
+  const retailers = React.useMemo(() => {
     if (!game) return mockRetailers;
     return mockRetailers.map((retailer, index) => {
       if (index === 0) {
@@ -45,11 +66,25 @@ const GameDetailPage = () => {
     });
   }, [game]);
 
-  if (!game) {
+  if (loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="text-center py-16">
-          <h2 className="text-2xl font-bold text-white mb-4">Game not found</h2>
+          <Loader2 className="w-8 h-8 text-orange-500 animate-spin mx-auto mb-4" />
+          <p className="text-gray-400 text-lg">Loading game details...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !game) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="text-center py-16">
+          <h2 className="text-2xl font-bold text-white mb-4">
+            {error ? 'Error loading game' : 'Game not found'}
+          </h2>
+          {error && <p className="text-red-400 mb-4">{error}</p>}
           <Button onClick={() => navigate('/')} className="bg-orange-500 hover:bg-orange-600">
             Back to Home
           </Button>
@@ -298,11 +333,9 @@ const GameDetailPage = () => {
 
               <Button
                 className="w-full bg-orange-500 hover:bg-orange-600 text-white gap-2"
-                onClick={() =>
-                  toast({
-                    title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
-                  })
-                }
+                onClick={() => {
+                  window.open(`https://store.steampowered.com/app/${game.id}`, '_blank');
+                }}
               >
                 <ExternalLink className="w-5 h-5" />
                 View on Steam
