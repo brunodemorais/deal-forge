@@ -37,11 +37,19 @@ class ApiClient {
     if (params.discountMin !== undefined) queryParams.append('discountMin', params.discountMin);
     if (params.priceMin !== undefined) queryParams.append('priceMin', params.priceMin);
     if (params.priceMax !== undefined) queryParams.append('priceMax', params.priceMax);
+    
+    // Support both pagination styles
+    if (params.page !== undefined) queryParams.append('page', params.page);
+    if (params.perPage !== undefined) queryParams.append('perPage', params.perPage);
+    
+    // Legacy support (can be removed if not used elsewhere)
     if (params.limit) queryParams.append('limit', params.limit);
     if (params.offset) queryParams.append('offset', params.offset);
 
     const queryString = queryParams.toString();
     const endpoint = `/api/games${queryString ? `?${queryString}` : ''}`;
+    
+    console.log('🌐 API Client calling:', endpoint);
     
     return this.request(endpoint);
   }
@@ -65,4 +73,3 @@ class ApiClient {
 
 export const apiClient = new ApiClient();
 export default apiClient;
-

@@ -51,29 +51,6 @@ def calculate_price_grade(current_price, historical_low, discount_percent):
     else:
         return "F"
 
-def calculate_forecast(price_history):
-    """Calculate price forecast based on recent price trends"""
-    if len(price_history) < 2:
-        return "stable"
-    
-    # Get last 7 days of prices
-    recent_prices = sorted(price_history[-7:], key=lambda x: x['date'])
-    
-    if len(recent_prices) < 2:
-        return "stable"
-    
-    first_price = recent_prices[0]['price']
-    last_price = recent_prices[-1]['price']
-    
-    change_percent = ((last_price - first_price) / first_price) * 100
-    
-    if change_percent < -5:
-        return "falling"
-    elif change_percent > 5:
-        return "rising"
-    else:
-        return "stable"
-
 def parse_json_field(field):
     """Parse JSON field that might be a string or already a Python object"""
     if field is None:
@@ -85,13 +62,14 @@ def parse_json_field(field):
             return []
     return field if isinstance(field, (list, dict)) else []
 
-def transform_game_data(game_row, price_data, price_history_data):
-    """Transform database row to frontend format"""
-    app_id, name, short_description, header_image_url, release_date, metacritic_score, \
-    recommendation_count, platform_windows, platform_mac, platform_linux, \
-    genres, publishers, developers = game_row
+def transform_game_data_from_row(row):
+    """Transform database row from optimized query to frontend format"""
+    (app_id, name, short_description, header_image_url, release_date, metacritic_score,
+     recommendation_count, platform_windows, platform_mac, platform_linux,
+     genres, publishers, developers, currency, initial_price, final_price, 
+     discount_percent, checked_at, lowest_price) = row
     
-    # Parse JSON fields - psycopg2 returns JSONB as Python objects, not strings
+    # Parse JSON fields
     genres_list = parse_json_field(genres)
     publishers_list = parse_json_field(publishers)
     developers_list = parse_json_field(developers)
@@ -101,30 +79,13 @@ def transform_game_data(game_row, price_data, price_history_data):
                   [g for g in genres_list if isinstance(g, str)]
     
     # Calculate prices
-    current_price = 0
-    original_price = 0
-    discount_percent = 0
-    historical_low = 0
+    current_price = (final_price / 100.0) if final_price else 0
+    original_price = (initial_price / 100.0) if initial_price else 0
+    discount_percent_val = discount_percent or 0
+    historical_low = (lowest_price / 100.0) if lowest_price else current_price
     
-    if price_data:
-        # price_data structure: (currency, initial_price, final_price, discount_percent, checked_at)
-        current_price = price_data[2] / 100.0  # final_price in cents
-        original_price = price_data[1] / 100.0  # initial_price in cents
-        discount_percent = price_data[3] or 0
-    
-    # Calculate historical low from price history
-    # price_history_data structure: (currency, initial_price, final_price, discount_percent, checked_at)
-    if price_history_data:
-        historical_low = min([p[2] / 100.0 for p in price_history_data if p[2]]) or current_price
-    else:
-        historical_low = current_price
-    
-    # Calculate price grade and forecast
-    price_grade = calculate_price_grade(current_price, historical_low, discount_percent)
-    forecast = calculate_forecast([
-        {'date': p[4].isoformat() if p[4] else datetime.now().isoformat(), 'price': p[2] / 100.0}
-        for p in price_history_data[-30:] if p[2]
-    ]) if price_history_data else "stable"
+    # Calculate price grade (forecast removed from list view for performance)
+    price_grade = calculate_price_grade(current_price, historical_low, discount_percent_val)
     
     return {
         'id': str(app_id),
@@ -141,10 +102,10 @@ def transform_game_data(game_row, price_data, price_history_data):
         },
         'current_price': current_price,
         'original_price': original_price,
-        'discount_percent': discount_percent,
+        'discount_percent': discount_percent_val,
         'historical_low': historical_low,
         'price_grade': price_grade,
-        'forecast': forecast,
+        'forecast': 'stable',  # Default for list view, calculate on detail page
         'short_description': short_description or '',
         'metacritic_score': metacritic_score,
         'recommendation_count': recommendation_count or 0
@@ -157,7 +118,7 @@ def health_check():
 
 @app.route('/api/games', methods=['GET'])
 def get_games():
-    """Get all games with current prices"""
+    """Get all games with current prices and pagination - OPTIMIZED VERSION"""
     conn = get_db_connection()
     if not conn:
         return jsonify({'error': 'Database connection failed'}), 500
@@ -170,86 +131,120 @@ def get_games():
         discount_min = request.args.get('discountMin', 0, type=int)
         price_min = request.args.get('priceMin', 0, type=float)
         price_max = request.args.get('priceMax', 1000, type=float)
-        limit = request.args.get('limit', 100, type=int)
-        offset = request.args.get('offset', 0, type=int)
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('perPage', 24, type=int)
         
-        # Build query
+        # Calculate offset
+        offset = (page - 1) * per_page
+        
+        # Convert prices to cents for database comparison
+        price_min_cents = int(price_min * 100)
+        price_max_cents = int(price_max * 100)
+        
+        # Build the optimized query with CTEs
         query = """
-            SELECT DISTINCT ON (g.app_id)
+            WITH latest_prices AS (
+                SELECT DISTINCT ON (app_id)
+                    app_id,
+                    currency,
+                    initial_price,
+                    final_price,
+                    discount_percent,
+                    checked_at
+                FROM price_history
+                ORDER BY app_id, checked_at DESC
+            ),
+            historical_lows AS (
+                SELECT 
+                    app_id,
+                    MIN(final_price) as lowest_price
+                FROM price_history
+                WHERE checked_at >= NOW() - INTERVAL '90 days'
+                GROUP BY app_id
+            )
+            SELECT 
                 g.app_id, g.name, g.short_description, g.header_image_url, g.release_date,
                 g.metacritic_score, g.recommendation_count,
                 g.platform_windows, g.platform_mac, g.platform_linux,
-                g.genres, g.publishers, g.developers
+                g.genres, g.publishers, g.developers,
+                lp.currency, lp.initial_price, lp.final_price, lp.discount_percent, lp.checked_at,
+                hl.lowest_price
             FROM games g
-            LEFT JOIN price_history ph ON g.app_id = ph.app_id
+            LEFT JOIN latest_prices lp ON g.app_id = lp.app_id
+            LEFT JOIN historical_lows hl ON g.app_id = hl.app_id
             WHERE 1=1
         """
+        
         params = []
         
+        # Apply filters
+        if discount_min > 0:
+            query += " AND COALESCE(lp.discount_percent, 0) >= %s"
+            params.append(discount_min)
+        
+        if price_min > 0:
+            query += " AND COALESCE(lp.final_price, 0) >= %s"
+            params.append(price_min_cents)
+        
+        if price_max < 1000:
+            query += " AND (lp.final_price <= %s OR lp.final_price IS NULL)"
+            params.append(price_max_cents)
+        
         if search:
-            query += " AND (LOWER(g.name) LIKE %s OR EXISTS (SELECT 1 FROM jsonb_array_elements(g.genres) AS genre WHERE LOWER(genre->>'description') LIKE %s))"
+            query += """ AND (
+                LOWER(g.name) LIKE %s 
+                OR EXISTS (
+                    SELECT 1 
+                    FROM jsonb_array_elements(g.genres) AS genre 
+                    WHERE LOWER(genre->>'description') LIKE %s
+                )
+            )"""
             search_pattern = f"%{search}%"
             params.extend([search_pattern, search_pattern])
         
-        query += """
-            ORDER BY g.app_id, ph.checked_at DESC NULLS LAST
-            LIMIT %s OFFSET %s
-        """
-        params.extend([limit, offset])
+        # Get total count with same filters
+        count_query = f"SELECT COUNT(*) FROM ({query}) as filtered_games"
+        cur.execute(count_query, params)
+        total_items = cur.fetchone()[0]
         
+        # Add ordering and pagination
+        query += " ORDER BY g.app_id LIMIT %s OFFSET %s"
+        params.extend([per_page, offset])
+        
+        # Execute main query
         cur.execute(query, params)
         games = cur.fetchall()
         
-        # Get current prices for each game
-        result = []
-        for game in games:
-            app_id = game[0]
-            
-            # Get latest price
-            cur.execute("""
-                SELECT currency, initial_price, final_price, discount_percent, checked_at
-                FROM price_history
-                WHERE app_id = %s
-                ORDER BY checked_at DESC
-                LIMIT 1
-            """, (app_id,))
-            price_data = cur.fetchone()
-            
-            # Get price history for forecast
-            cur.execute("""
-                SELECT currency, initial_price, final_price, discount_percent, checked_at
-                FROM price_history
-                WHERE app_id = %s
-                ORDER BY checked_at DESC
-                LIMIT 30
-            """, (app_id,))
-            price_history_data = cur.fetchall()
-            
-            game_data = transform_game_data(game, price_data, price_history_data)
-            
-            # Apply filters
-            if game_data['discount_percent'] < discount_min:
-                continue
-            if game_data['current_price'] < price_min:
-                continue
-            if game_data['current_price'] > price_max:
-                continue
-            
-            result.append(game_data)
+        # Transform results
+        result = [transform_game_data_from_row(game) for game in games]
+        
+        # Calculate pagination metadata
+        total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 1
         
         cur.close()
         conn.close()
         
-        return jsonify(result)
+        return jsonify({
+            'games': result,
+            'pagination': {
+                'page': page,
+                'perPage': per_page,
+                'totalItems': total_items,
+                'totalPages': total_pages,
+                'hasNext': page < total_pages,
+                'hasPrev': page > 1
+            }
+        })
     
     except Exception as e:
         if conn:
             conn.close()
+        print(f"Error in get_games: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/games/<int:app_id>', methods=['GET'])
 def get_game_details(app_id):
-    """Get detailed information about a specific game"""
+    """Get detailed information about a specific game with forecast calculation"""
     conn = get_db_connection()
     if not conn:
         return jsonify({'error': 'Database connection failed'}), 500
@@ -257,41 +252,95 @@ def get_game_details(app_id):
     try:
         cur = conn.cursor()
         
-        # Get game details
-        cur.execute("""
-            SELECT app_id, name, short_description, header_image_url, release_date,
-                   metacritic_score, recommendation_count,
-                   platform_windows, platform_mac, platform_linux,
-                   genres, publishers, developers
-            FROM games
-            WHERE app_id = %s
-        """, (app_id,))
+        # Use optimized query for single game
+        query = """
+            WITH latest_price AS (
+                SELECT DISTINCT ON (app_id)
+                    app_id,
+                    currency,
+                    initial_price,
+                    final_price,
+                    discount_percent,
+                    checked_at
+                FROM price_history
+                WHERE app_id = %s
+                ORDER BY app_id, checked_at DESC
+                LIMIT 1
+            ),
+            historical_low AS (
+                SELECT 
+                    app_id,
+                    MIN(final_price) as lowest_price
+                FROM price_history
+                WHERE app_id = %s
+                    AND checked_at >= NOW() - INTERVAL '90 days'
+                GROUP BY app_id
+            ),
+            price_history_30d AS (
+                SELECT 
+                    checked_at,
+                    final_price
+                FROM price_history
+                WHERE app_id = %s
+                ORDER BY checked_at DESC
+                LIMIT 30
+            )
+            SELECT 
+                g.app_id, g.name, g.short_description, g.header_image_url, g.release_date,
+                g.metacritic_score, g.recommendation_count,
+                g.platform_windows, g.platform_mac, g.platform_linux,
+                g.genres, g.publishers, g.developers,
+                lp.currency, lp.initial_price, lp.final_price, lp.discount_percent, lp.checked_at,
+                hl.lowest_price,
+                COALESCE(
+                    json_agg(
+                        json_build_object('date', ph.checked_at, 'price', ph.final_price)
+                        ORDER BY ph.checked_at DESC
+                    ) FILTER (WHERE ph.checked_at IS NOT NULL),
+                    '[]'::json
+                ) as price_history
+            FROM games g
+            LEFT JOIN latest_price lp ON g.app_id = lp.app_id
+            LEFT JOIN historical_low hl ON g.app_id = hl.app_id
+            LEFT JOIN price_history_30d ph ON g.app_id = %s
+            WHERE g.app_id = %s
+            GROUP BY g.app_id, g.name, g.short_description, g.header_image_url, g.release_date,
+                     g.metacritic_score, g.recommendation_count, g.platform_windows, g.platform_mac, 
+                     g.platform_linux, g.genres, g.publishers, g.developers,
+                     lp.currency, lp.initial_price, lp.final_price, lp.discount_percent, 
+                     lp.checked_at, hl.lowest_price
+        """
         
+        cur.execute(query, (app_id, app_id, app_id, app_id, app_id))
         game = cur.fetchone()
+        
         if not game:
             return jsonify({'error': 'Game not found'}), 404
         
-        # Get latest price
-        cur.execute("""
-            SELECT currency, initial_price, final_price, discount_percent, checked_at
-            FROM price_history
-            WHERE app_id = %s
-            ORDER BY checked_at DESC
-            LIMIT 1
-        """, (app_id,))
-        price_data = cur.fetchone()
+        # Extract price history from the row
+        price_history_json = game[19] if len(game) > 19 else []
         
-        # Get price history
-        cur.execute("""
-            SELECT currency, initial_price, final_price, discount_percent, checked_at
-            FROM price_history
-            WHERE app_id = %s
-            ORDER BY checked_at DESC
-            LIMIT 90
-        """, (app_id,))
-        price_history_data = cur.fetchall()
+        # Transform main game data
+        game_data = transform_game_data_from_row(game[:19])
         
-        game_data = transform_game_data(game, price_data, price_history_data)
+        # Calculate forecast from price history
+        if price_history_json and len(price_history_json) >= 2:
+            # Sort by date and get last 7 days
+            recent_prices = sorted(price_history_json[-7:], key=lambda x: x['date'])
+            
+            if len(recent_prices) >= 2:
+                first_price = recent_prices[0]['price'] / 100.0
+                last_price = recent_prices[-1]['price'] / 100.0
+                
+                if first_price > 0:
+                    change_percent = ((last_price - first_price) / first_price) * 100
+                    
+                    if change_percent < -5:
+                        game_data['forecast'] = "falling"
+                    elif change_percent > 5:
+                        game_data['forecast'] = "rising"
+                    else:
+                        game_data['forecast'] = "stable"
         
         cur.close()
         conn.close()
@@ -301,6 +350,7 @@ def get_game_details(app_id):
     except Exception as e:
         if conn:
             conn.close()
+        print(f"Error in get_game_details: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/games/<int:app_id>/price-history', methods=['GET'])
@@ -343,7 +393,7 @@ def get_price_history(app_id):
 
 @app.route('/api/deals', methods=['GET'])
 def get_deals():
-    """Get games with deals (discounts)"""
+    """Get games with deals (discounts) - OPTIMIZED VERSION"""
     conn = get_db_connection()
     if not conn:
         return jsonify({'error': 'Database connection failed'}), 500
@@ -351,45 +401,46 @@ def get_deals():
     try:
         cur = conn.cursor()
         
-        # Get games with current discounts
-        cur.execute("""
-            SELECT DISTINCT ON (g.app_id)
+        # Optimized query for deals
+        query = """
+            WITH latest_prices AS (
+                SELECT DISTINCT ON (app_id)
+                    app_id,
+                    currency,
+                    initial_price,
+                    final_price,
+                    discount_percent,
+                    checked_at
+                FROM price_history
+                WHERE discount_percent > 0
+                ORDER BY app_id, checked_at DESC
+            ),
+            historical_lows AS (
+                SELECT 
+                    app_id,
+                    MIN(final_price) as lowest_price
+                FROM price_history
+                WHERE checked_at >= NOW() - INTERVAL '90 days'
+                GROUP BY app_id
+            )
+            SELECT 
                 g.app_id, g.name, g.short_description, g.header_image_url, g.release_date,
                 g.metacritic_score, g.recommendation_count,
                 g.platform_windows, g.platform_mac, g.platform_linux,
                 g.genres, g.publishers, g.developers,
-                ph.final_price, ph.initial_price, ph.discount_percent
+                lp.currency, lp.initial_price, lp.final_price, lp.discount_percent, lp.checked_at,
+                hl.lowest_price
             FROM games g
-            INNER JOIN price_history ph ON g.app_id = ph.app_id
-            WHERE ph.discount_percent > 0
-            ORDER BY g.app_id, ph.checked_at DESC
-        """)
+            INNER JOIN latest_prices lp ON g.app_id = lp.app_id
+            LEFT JOIN historical_lows hl ON g.app_id = hl.app_id
+            ORDER BY lp.discount_percent DESC
+        """
         
+        cur.execute(query)
         games = cur.fetchall()
         
-        result = []
-        for game in games:
-            app_id = game[0]
-            
-            # Get price history
-            cur.execute("""
-                SELECT currency, initial_price, final_price, discount_percent, checked_at
-                FROM price_history
-                WHERE app_id = %s
-                ORDER BY checked_at DESC
-                LIMIT 30
-            """, (app_id,))
-            price_history_data = cur.fetchall()
-            
-            # Create price data tuple: (currency, initial_price, final_price, discount_percent, checked_at)
-            # game[13] = final_price, game[14] = initial_price, game[15] = discount_percent
-            price_data = (None, game[14], game[13], game[15], datetime.now())
-            
-            game_data = transform_game_data(game[:13], price_data, price_history_data)
-            result.append(game_data)
-        
-        # Sort by discount percentage
-        result.sort(key=lambda x: x['discount_percent'], reverse=True)
+        # Transform results
+        result = [transform_game_data_from_row(game) for game in games]
         
         cur.close()
         conn.close()
@@ -399,9 +450,9 @@ def get_deals():
     except Exception as e:
         if conn:
             conn.close()
+        print(f"Error in get_deals: {e}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.getenv('API_PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
-
