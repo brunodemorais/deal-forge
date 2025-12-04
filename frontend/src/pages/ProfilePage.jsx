@@ -67,7 +67,8 @@ const ProfilePage = () => {
               variant="outline"
               onClick={() =>
                 toast({
-                  title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
+                  title: "Edit profile feature coming soon",
+                  description: "This feature will be available in a future update.",
                 })
               }
               className="gap-2 bg-[#1a1a1f] border-[#3a3a3f] hover:bg-[#2a2a2f]"
@@ -120,7 +121,8 @@ const ProfilePage = () => {
               className="w-full justify-start gap-3 bg-[#1a1a1f] border-[#3a3a3f] hover:bg-[#2a2a2f]"
               onClick={() =>
                 toast({
-                  title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
+                  title: "Notification preferences coming soon",
+                  description: "This feature will be available in a future update.",
                 })
               }
             >
@@ -133,7 +135,8 @@ const ProfilePage = () => {
               className="w-full justify-start gap-3 bg-[#1a1a1f] border-[#3a3a3f] hover:bg-[#2a2a2f]"
               onClick={() =>
                 toast({
-                  title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
+                  title: "Account settings coming soon",
+                  description: "This feature will be available in a future update.",
                 })
               }
             >

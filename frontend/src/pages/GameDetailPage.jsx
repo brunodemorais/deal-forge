@@ -135,7 +135,8 @@ const GameDetailPage = () => {
 
   const handleWatchlistToggle = () => {
     toast({
-      title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
+      title: "Watchlist feature coming soon",
+      description: "This feature will be available in a future update.",
     });
   };
 
@@ -261,7 +262,8 @@ const GameDetailPage = () => {
                         className="text-orange-500 hover:text-orange-400"
                         onClick={() =>
                           toast({
-                            title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
+                            title: "Feature coming soon",
+                            description: "This feature will be available in a future update.",
                           })
                         }
                       >
