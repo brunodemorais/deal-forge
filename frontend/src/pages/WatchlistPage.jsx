@@ -119,7 +119,8 @@ const WatchlistPage = () => {
 
   const applyTag = () => {
     toast({
-      title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
+      title: "Tagging feature coming soon",
+      description: "This feature will be available in a future update.",
     });
     setShowTagDialog(false);
     setNewTag('');
@@ -203,7 +204,8 @@ const WatchlistPage = () => {
                     className="bg-red-500 hover:bg-red-600 text-white"
                     onClick={() =>
                       toast({
-                        title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
+                        title: "Remove feature coming soon",
+                        description: "This feature will be available in a future update.",
                       })
                     }
                   >
@@ -380,7 +382,8 @@ const WatchlistPage = () => {
                             size="sm"
                             onClick={() =>
                               toast({
-                                title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
+                                title: "Tagging feature coming soon",
+                                description: "This feature will be available in a future update.",
                               })
                             }
                             className="text-gray-400 hover:text-white"
@@ -392,7 +395,8 @@ const WatchlistPage = () => {
                             size="sm"
                             onClick={() =>
                               toast({
-                                title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
+                                title: "Remove feature coming soon",
+                                description: "This feature will be available in a future update.",
                               })
                             }
                             className="text-red-400 hover:text-red-300"

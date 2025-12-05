@@ -1,10 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet';
 import { motion } from 'framer-motion';
-import { TrendingDown, Zap } from 'lucide-react';
+import { TrendingDown, Zap, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import SearchBar from '@/components/SearchBar';
 import GameCard from '@/components/GameCard';
-import { mockGames } from '@/lib/mockData';
+import { apiClient } from '@/lib/api/client';
 
 const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -14,38 +14,157 @@ const HomePage = () => {
     priceMax: 100,
     releaseYear: null,
   });
+  const [games, setGames] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    perPage: 24,
+    totalItems: 0,
+    totalPages: 0,
+    hasNext: false,
+    hasPrev: false
+  });
 
-  const topDeals = useMemo(() => {
-    return mockGames
-      .filter(game => game.discount_percent > 0)
-      .sort((a, b) => b.discount_percent - a.discount_percent)
-      .slice(0, 6);
-  }, []);
+  // Reset to page 1 when filters or search change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filters.discountMin, filters.priceMin, filters.priceMax, filters.releaseYear]);
 
-  const filteredGames = useMemo(() => {
-    let games = [...mockGames];
-
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      games = games.filter(game =>
-        game.name.toLowerCase().includes(query) ||
-        game.genres?.some(genre => genre.toLowerCase().includes(query))
-      );
-    }
-
-    games = games.filter(game => {
-      if (game.discount_percent < filters.discountMin) return false;
-      if (game.current_price < filters.priceMin) return false;
-      if (game.current_price > filters.priceMax) return false;
-      if (filters.releaseYear) {
-        const gameYear = new Date(game.release_date).getFullYear();
-        if (gameYear !== filters.releaseYear) return false;
+  // Fetch games when page or filters change
+  useEffect(() => {
+    const fetchGames = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = {
+          search: searchQuery || undefined,
+          discountMin: filters.discountMin,
+          priceMin: filters.priceMin,
+          priceMax: filters.priceMax,
+          page: currentPage,
+          perPage: 24,
+        };
+        
+        const response = await apiClient.getGames(params);
+        
+        let fetchedGames = response.games || response;
+        const paginationData = response.pagination;
+        
+        // Apply release year filter on frontend if needed
+        if (filters.releaseYear) {
+          fetchedGames = fetchedGames.filter(game => {
+            if (!game.release_date) return false;
+            const gameYear = new Date(game.release_date).getFullYear();
+            return gameYear === filters.releaseYear;
+          });
+        }
+        
+        setGames(fetchedGames);
+        
+        if (paginationData) {
+          setPagination(paginationData);
+        }
+      } catch (err) {
+        console.error('Error fetching games:', err);
+        setError(err.message || 'Failed to load games');
+      } finally {
+        setLoading(false);
       }
-      return true;
-    });
+    };
 
-    return games;
-  }, [searchQuery, filters]);
+    fetchGames();
+  }, [searchQuery, filters.discountMin, filters.priceMin, filters.priceMax, filters.releaseYear, currentPage]);
+
+  const handlePageChange = (newPage) => {
+    setCurrentPage(newPage);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const topDeals = games
+    .filter(game => game.discount_percent > 0)
+    .sort((a, b) => b.discount_percent - a.discount_percent)
+    .slice(0, 6);
+
+  const filteredGames = games;
+
+  const PaginationControls = () => (
+    <div className="flex items-center justify-center gap-2 mt-8">
+      <button
+        onClick={() => handlePageChange(pagination.page - 1)}
+        disabled={!pagination.hasPrev}
+        className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        <ChevronLeft className="w-4 h-4" />
+        Previous
+      </button>
+      
+      <div className="flex items-center gap-2">
+        {/* First page */}
+        {pagination.page > 3 && (
+          <>
+            <button
+              onClick={() => handlePageChange(1)}
+              className="px-3 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              1
+            </button>
+            {pagination.page > 4 && (
+              <span className="text-gray-400 px-2">...</span>
+            )}
+          </>
+        )}
+        
+        {/* Pages around current page */}
+        {Array.from({ length: pagination.totalPages }, (_, i) => i + 1)
+          .filter(page => {
+            return page === pagination.page || 
+                   page === pagination.page - 1 || 
+                   page === pagination.page + 1 ||
+                   (page === pagination.page - 2 && pagination.page <= 3) ||
+                   (page === pagination.page + 2 && pagination.page >= pagination.totalPages - 2);
+          })
+          .map(page => (
+            <button
+              key={page}
+              onClick={() => handlePageChange(page)}
+              className={`px-3 py-2 rounded-lg transition-colors ${
+                page === pagination.page
+                  ? 'bg-orange-500 text-white'
+                  : 'bg-gray-800 text-white hover:bg-gray-700'
+              }`}
+            >
+              {page}
+            </button>
+          ))}
+        
+        {/* Last page */}
+        {pagination.page < pagination.totalPages - 2 && (
+          <>
+            {pagination.page < pagination.totalPages - 3 && (
+              <span className="text-gray-400 px-2">...</span>
+            )}
+            <button
+              onClick={() => handlePageChange(pagination.totalPages)}
+              className="px-3 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              {pagination.totalPages}
+            </button>
+          </>
+        )}
+      </div>
+      
+      <button
+        onClick={() => handlePageChange(pagination.page + 1)}
+        disabled={!pagination.hasNext}
+        className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        Next
+        <ChevronRight className="w-4 h-4" />
+      </button>
+    </div>
+  );
 
   return (
     <>
@@ -77,7 +196,7 @@ const HomePage = () => {
           </div>
         </motion.section>
 
-        {!searchQuery && (
+        {!searchQuery && !loading && currentPage === 1 && (
           <motion.section
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -91,18 +210,24 @@ const HomePage = () => {
               <h2 className="text-2xl font-bold text-white">Top Deals Today</h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {topDeals.map((game, index) => (
-                <motion.div
-                  key={game.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.1 }}
-                >
-                  <GameCard game={game} />
-                </motion.div>
-              ))}
-            </div>
+            {topDeals.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-gray-400">No deals available at the moment</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {topDeals.map((game, index) => (
+                  <motion.div
+                    key={game.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.1 }}
+                  >
+                    <GameCard game={game} />
+                  </motion.div>
+                ))}
+              </div>
+            )}
           </motion.section>
         )}
 
@@ -119,26 +244,44 @@ const HomePage = () => {
             <h2 className="text-2xl font-bold text-white">
               {searchQuery ? 'Search Results' : 'All Games'}
             </h2>
-            <span className="text-gray-400">({filteredGames.length})</span>
+            {!loading && (
+              <span className="text-gray-400">
+                ({pagination.totalItems} {pagination.totalItems === 1 ? 'game' : 'games'})
+              </span>
+            )}
           </div>
 
-          {filteredGames.length === 0 ? (
+          {loading ? (
+            <div className="text-center py-16">
+              <Loader2 className="w-8 h-8 text-orange-500 animate-spin mx-auto mb-4" />
+              <p className="text-gray-400 text-lg">Loading games...</p>
+            </div>
+          ) : error ? (
+            <div className="text-center py-16">
+              <p className="text-red-400 text-lg mb-2">Error loading games</p>
+              <p className="text-gray-400 text-sm">{error}</p>
+            </div>
+          ) : filteredGames.length === 0 ? (
             <div className="text-center py-16">
               <p className="text-gray-400 text-lg">No games found matching your criteria</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredGames.map((game, index) => (
-                <motion.div
-                  key={game.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                >
-                  <GameCard game={game} />
-                </motion.div>
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {filteredGames.map((game, index) => (
+                  <motion.div
+                    key={game.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                  >
+                    <GameCard game={game} />
+                  </motion.div>
+                ))}
+              </div>
+              
+              {pagination.totalPages > 1 && <PaginationControls />}
+            </>
           )}
         </motion.section>
       </div>

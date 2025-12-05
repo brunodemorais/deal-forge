@@ -14,7 +14,8 @@ const GameCard = ({ game, onWatchlistToggle, isInWatchlist }) => {
       onWatchlistToggle(game);
     } else {
       toast({
-        title: "🚧 This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
+        title: "Watchlist feature coming soon",
+        description: "This feature will be available in a future update.",
       });
     }
   };
