@@ -3,7 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Home, TrendingDown, Bookmark, User, LogOut, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
+// CHANGED: Import from new custom AuthContext
+import { useAuth } from '@/contexts/AuthContext'; 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -16,7 +17,8 @@ import {
 const Navigation = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  // CHANGED: Destructure 'logout' instead of 'signOut'
+  const { user, logout } = useAuth(); 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
@@ -25,8 +27,9 @@ const Navigation = () => {
     { path: '/watchlist', label: 'Watchlist', icon: Bookmark },
   ];
 
-  const handleSignOut = async () => {
-    await signOut();
+  // CHANGED: Call the new synchronous logout() method
+  const handleSignOut = () => {
+    logout(); 
     navigate('/');
   };
 

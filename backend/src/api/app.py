@@ -5,6 +5,11 @@ import os
 import json
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from bcrypt import gensalt, hashpw
+import bcrypt
+import jwt
+from functools import wraps
+SECRET_KEY = os.getenv('JWT_SECRET', 'your-secret-key')
 
 load_dotenv()
 
@@ -452,6 +457,188 @@ def get_deals():
             conn.close()
         print(f"Error in get_deals: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    email = data.get('email', '').strip().lower()
+    password = data.get('password', '')
+
+    if not email or not password or '@' not in email or len(password) < 6:
+        return jsonify({'error': 'Invalid email or password'}), 400
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+    
+    cur = conn.cursor()
+    try:
+        # Check if user already exists
+        cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+        if cur.fetchone():
+            return jsonify({'error': 'Email already registered'}), 409
+        
+        # Hash password
+        salt = bcrypt.gensalt()
+        hashed_pw = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+        
+        # Insert new user
+        cur.execute(
+            """
+            INSERT INTO users (email, password_hash, created_at)
+            VALUES (%s, %s, NOW()) RETURNING id
+            """,
+            (email, hashed_pw)
+        )
+        user_id = cur.fetchone()[0]
+        conn.commit()
+        
+        return jsonify({'success': True, 'user_id': user_id, 'email': email}), 201
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    email = data.get('email', '').strip().lower()
+    password = data.get('password', '')
+
+    if not email or not password:
+        return jsonify({'error': 'Invalid email or password'}), 400
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+    
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT id, password_hash FROM users WHERE email = %s", (email,))
+        user = cur.fetchone()
+        if not user:
+            return jsonify({'error': 'User not found or incorrect password'}), 401
+        user_id, password_hash = user
+        if not bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8')):
+            return jsonify({'error': 'User not found or incorrect password'}), 401
+        # Issue JWT
+        payload = {
+            'user_id': user_id,
+            'email': email,
+            'exp': datetime.utcnow() + timedelta(days=7)
+        }
+        token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+        return jsonify({'token': token, 'user_id': user_id, 'email': email})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+def decode_jwt_token(token):
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+@app.route('/api/auth/me', methods=['GET'])
+def auth_me():
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth_header.split(' ', 1)[1]
+    payload = decode_jwt_token(token)
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    user_id = payload.get('user_id')
+    email = payload.get('email')
+    return jsonify({'user_id': user_id, 'email': email})
+
+def auth_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+        token = auth_header.split(' ', 1)[1]
+        payload = decode_jwt_token(token)
+        if not payload or 'user_id' not in payload:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        request.user_id = payload['user_id']
+        return f(*args, **kwargs)
+    return wrapper
+
+@app.route('/api/watchlist', methods=['GET'])
+@auth_required
+def get_watchlist():
+    user_id = request.user_id
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT app_id, added_at FROM watchlist WHERE user_id = %s", (user_id,))
+        rows = cur.fetchall()
+        games = [{'app_id': r[0], 'added_at': r[1].isoformat()} for r in rows]
+        return jsonify({'watchlist': games})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+@app.route('/api/watchlist', methods=['POST'])
+@auth_required
+def add_to_watchlist():
+    user_id = request.user_id
+    data = request.get_json()
+    app_id = data.get('app_id')
+    if not app_id:
+        return jsonify({'error': 'app_id is required'}), 400
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+    cur = conn.cursor()
+    try:
+        # Prevent duplicates
+        cur.execute("SELECT 1 FROM watchlist WHERE user_id = %s AND app_id = %s", (user_id, app_id))
+        if cur.fetchone():
+            return jsonify({'error': 'Game already in watchlist'}), 409
+        cur.execute(
+            "INSERT INTO watchlist (user_id, app_id, added_at) VALUES (%s, %s, NOW())",
+            (user_id, app_id)
+        )
+        conn.commit()
+        return jsonify({'success': True, 'app_id': app_id})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+@app.route('/api/watchlist/<int:app_id>', methods=['DELETE'])
+@auth_required
+def remove_from_watchlist(app_id):
+    user_id = request.user_id
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM watchlist WHERE user_id = %s AND app_id = %s", (user_id, app_id))
+        conn.commit()
+        return jsonify({'success': True, 'app_id': app_id})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
 
 if __name__ == '__main__':
     port = int(os.getenv('API_PORT', 5000))

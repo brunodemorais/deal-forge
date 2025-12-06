@@ -54,3 +54,20 @@ CREATE TABLE IF NOT EXISTS games_to_track (
 -- Index for faster queries
 CREATE INDEX IF NOT EXISTS idx_status ON games_to_track(status);
 CREATE INDEX IF NOT EXISTS idx_free_to_play ON games_to_track(is_free_to_play);
+
+
+-- Users table
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Watchlist table
+CREATE TABLE IF NOT EXISTS watchlist (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    app_id INTEGER REFERENCES games(app_id) ON DELETE CASCADE,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

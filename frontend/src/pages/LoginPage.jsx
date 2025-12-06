@@ -2,17 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Mail, Lock } from 'lucide-react';
+import { Mail, Lock, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
+// CHANGED: Import from new custom AuthContext
+import { useAuth } from '@/contexts/AuthContext'; 
 
 const LoginPage = () => {
   const navigate = useNavigate();
-  const { user, signIn, signUp } = useAuth();
+  // CHANGED: Destructure 'login' and 'register' (replacing signIn/signUp)
+  const { user, login, register } = useAuth(); 
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState(''); // State for showing backend errors
+  
   const [signInEmail, setSignInEmail] = useState('');
   const [signInPassword, setSignInPassword] = useState('');
   const [signUpEmail, setSignUpEmail] = useState('');
@@ -20,6 +24,7 @@ const LoginPage = () => {
   const [signUpConfirmPassword, setSignUpConfirmPassword] = useState('');
 
   useEffect(() => {
+    // Redirect if already logged in
     if (user) {
       navigate('/');
     }
@@ -28,23 +33,46 @@ const LoginPage = () => {
   const handleSignIn = async (e) => {
     e.preventDefault();
     setIsLoading(true);
-    const { error } = await signIn(signInEmail, signInPassword);
+    setErrorMsg('');
+    
+    // CHANGED: Call new login method
+    const { error } = await login(signInEmail, signInPassword);
+    
     setIsLoading(false);
-    if (!error) {
+    if (error) {
+      setErrorMsg(error);
+    } else {
       navigate('/');
     }
   };
 
   const handleSignUp = async (e) => {
     e.preventDefault();
+    setErrorMsg('');
+
     if (signUpPassword !== signUpConfirmPassword) {
+      setErrorMsg("Passwords do not match");
       return;
     }
+    
     setIsLoading(true);
-    const { error } = await signUp(signUpEmail, signUpPassword);
-    setIsLoading(false);
-    if (!error) {
-      navigate('/');
+    // CHANGED: Call new register method
+    const { error: registerError } = await register(signUpEmail, signUpPassword);
+    
+    if (registerError) {
+      setIsLoading(false);
+      setErrorMsg(registerError);
+    } else {
+      // SUCCESS: Attempt to log in immediately after registration
+      const { error: loginError } = await login(signUpEmail, signUpPassword);
+      setIsLoading(false);
+      
+      if (!loginError) {
+        navigate('/');
+      } else {
+        // If auto-login fails, inform user to try logging in manually
+        setErrorMsg('Registration successful, but automatic login failed. Please sign in.');
+      }
     }
   };
 
@@ -52,7 +80,7 @@ const LoginPage = () => {
     <>
       <Helmet>
         <title>Login | DealForge</title>
-        <meta name="description" content="Sign in to DealForge to track your favorite Steam games, set price alerts, and manage your watchlist." />
+        <meta name="description" content="Sign in to DealForge to track your favorite Steam games." />
       </Helmet>
 
       <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 py-8">
@@ -67,6 +95,13 @@ const LoginPage = () => {
           </div>
 
           <div className="bg-[#2a2a2f] rounded-lg border border-[#3a3a3f] p-6">
+            {/* Display Errors */}
+            {errorMsg && (
+              <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm text-center">
+                {errorMsg}
+              </div>
+            )}
+
             <Tabs defaultValue="signin" className="w-full">
               <TabsList className="grid w-full grid-cols-2 bg-[#1a1a1f]">
                 <TabsTrigger value="signin">Sign In</TabsTrigger>
@@ -112,6 +147,7 @@ const LoginPage = () => {
                     className="w-full bg-orange-500 hover:bg-orange-600 text-white"
                     disabled={isLoading}
                   >
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     {isLoading ? 'Signing in...' : 'Sign In'}
                   </Button>
                 </form>
@@ -167,9 +203,10 @@ const LoginPage = () => {
                         minLength={6}
                       />
                     </div>
-                    {signUpPassword !== signUpConfirmPassword && signUpConfirmPassword && (
+                    {/* The original code had a separate check here, but the combined error message is better */}
+                    {/* {signUpPassword !== signUpConfirmPassword && signUpConfirmPassword && (
                       <p className="text-red-400 text-sm">Passwords do not match</p>
-                    )}
+                    )} */}
                   </div>
 
                   <Button
@@ -177,6 +214,7 @@ const LoginPage = () => {
                     className="w-full bg-orange-500 hover:bg-orange-600 text-white"
                     disabled={isLoading || signUpPassword !== signUpConfirmPassword}
                   >
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     {isLoading ? 'Creating account...' : 'Create Account'}
                   </Button>
                 </form>

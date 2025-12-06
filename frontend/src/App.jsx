@@ -1,7 +1,8 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet';
-import { AuthProvider } from '@/contexts/SupabaseAuthContext';
+// CHANGED: Import from new AuthContext
+import { AuthProvider } from '@/contexts/AuthContext';
 import { Toaster } from '@/components/ui/toaster';
 import Navigation from '@/components/Navigation';
 import HomePage from '@/pages/HomePage';
