@@ -18,16 +18,20 @@ import { Button } from '@/components/ui/button';
 import PriceChart from '@/components/PriceChart';
 import { mockRetailers } from '@/lib/mockData';
 import { useToast } from '@/components/ui/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 import { apiClient } from '@/lib/api/client';
 
 const GameDetailPage = () => {
   const { gameId } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user } = useAuth()
   const [game, setGame] = useState(null);
   const [priceHistory, setPriceHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // NEW STATE: To track if the game is watchlisted
+  const [isWatchlisted, setIsWatchlisted] = useState(false); 
 
   useEffect(() => {
     const fetchGameData = async () => {
@@ -40,6 +44,20 @@ const GameDetailPage = () => {
         ]);
         setGame(gameData);
         setPriceHistory(historyData);
+
+        // NEW: Check watchlist status using the existing getWatchlist endpoint
+        try {
+            const watchlistResponse = await apiClient.getWatchlist();
+            // Expects { games: [...] } from the backend fix
+            const watchlistGames = Array.isArray(watchlistResponse?.games) ? watchlistResponse.games : [];
+            const isGameInWatchlist = watchlistGames.some(g => g.app_id.toString() === gameId.toString());
+            setIsWatchlisted(isGameInWatchlist);
+        } catch (watchlistErr) {
+            // Ignore if not logged in or fetch fails; assume not watchlisted
+            console.warn("Could not fetch watchlist status for game:", watchlistErr.message);
+            setIsWatchlisted(false);
+        }
+
       } catch (err) {
         console.error('Error fetching game data:', err);
         setError(err.message || 'Failed to load game details');
@@ -52,6 +70,43 @@ const GameDetailPage = () => {
       fetchGameData();
     }
   }, [gameId]);
+
+  // NEW: Functional toggle handler
+  const handleWatchlistToggle = async () => {
+    if (!game || !game.app_id) return;
+    const appId = game.app_id;
+    
+    try {
+      if (isWatchlisted) {
+        // REMOVE from watchlist
+        await apiClient.removeFromWatchlist(appId);
+        setIsWatchlisted(false);
+        toast({
+          title: 'Removed from Watchlist',
+          description: `${game.name} will no longer be tracked.`,
+        });
+      } else {
+        // ADD to watchlist
+        await apiClient.addToWatchlist(appId);
+        setIsWatchlisted(true);
+        toast({
+          title: 'Added to Watchlist',
+          description: `${game.name} is now being tracked for price drops!`,
+        });
+      }
+    } catch (err) {
+      console.error('Watchlist toggle failed:', err);
+      // Handle the 409 Conflict error specifically
+      const errorMsg = err.message.includes('409') 
+        ? 'Game is already on your watchlist.' 
+        : err.message || 'Failed to update watchlist. Please try again.';
+      toast({
+        title: 'Watchlist Error',
+        description: errorMsg,
+        variant: 'destructive',
+      });
+    }
+  };
 
   const retailers = React.useMemo(() => {
     if (!game) return mockRetailers;
@@ -67,18 +122,18 @@ const GameDetailPage = () => {
   }, [game]);
 
   if (loading) {
-    return (
+      return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="text-center py-16">
           <Loader2 className="w-8 h-8 text-orange-500 animate-spin mx-auto mb-4" />
           <p className="text-gray-400 text-lg">Loading game details...</p>
         </div>
-      </div>
-    );
-  }
-
+        </div>
+      );
+    }
+    
   if (error || !game) {
-    return (
+        return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="text-center py-16">
           <h2 className="text-2xl font-bold text-white mb-4">
@@ -89,8 +144,8 @@ const GameDetailPage = () => {
             Back to Home
           </Button>
         </div>
-      </div>
-    );
+          </div>
+        );
   }
 
   const getPriceGradeColor = (grade) => {
@@ -133,13 +188,6 @@ const GameDetailPage = () => {
     }
   };
 
-  const handleWatchlistToggle = () => {
-    toast({
-      title: "Watchlist feature coming soon",
-      description: "This feature will be available in a future update.",
-    });
-  };
-
   return (
     <>
       <Helmet>
@@ -169,7 +217,7 @@ const GameDetailPage = () => {
             <div className="bg-[#2a2a2f] rounded-lg overflow-hidden border border-[#3a3a3f]">
               <img
                 src={game.header_image}
-                alt={game.name}
+                  alt={game.name}
                 className="w-full aspect-video object-cover"
               />
             </div>
@@ -189,16 +237,16 @@ const GameDetailPage = () => {
                     ))}
                   </div>
                 </div>
-                <Button
+                    <Button
                   size="lg"
-                  onClick={handleWatchlistToggle}
+                      onClick={handleWatchlistToggle}
                   className="gap-2 bg-orange-500 hover:bg-orange-600 text-white"
-                >
+                    >
                   <Bookmark className="w-5 h-5" />
                   Add to Watchlist
-                </Button>
-              </div>
-
+                    </Button>
+                  </div>
+                  
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <div className="bg-[#2a2a2f] rounded-lg p-4 border border-[#3a3a3f]">
                   <div className="flex items-center gap-2 text-gray-400 text-sm mb-1">
@@ -247,15 +295,15 @@ const GameDetailPage = () => {
                           -{retailer.discount}%
                         </span>
                       )}
-                    </div>
-                    <div className="flex items-center gap-4">
-                      {retailer.price !== null ? (
-                        <span className="text-xl font-bold text-white">
-                          ${retailer.price.toFixed(2)}
-                        </span>
-                      ) : (
-                        <span className="text-gray-400">N/A</span>
-                      )}
+                  </div>
+                  <div className="flex items-center gap-4">
+                    {retailer.price !== null ? (
+                      <span className="text-xl font-bold text-white">
+                        ${retailer.price.toFixed(2)}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">N/A</span>
+                    )}
                       <Button
                         variant="ghost"
                         size="icon"
@@ -268,10 +316,10 @@ const GameDetailPage = () => {
                         }
                       >
                         <ExternalLink className="w-5 h-5" />
-                      </Button>
-                    </div>
+                    </Button>
                   </div>
-                ))}
+                </div>
+              ))}
               </div>
             </div>
           </div>
@@ -299,7 +347,7 @@ const GameDetailPage = () => {
                     )}
                   </>
                 )}
-              </div>
+            </div>
 
               <div className="space-y-3 pt-4 border-t border-[#3a3a3f]">
                 <div className="flex items-center justify-between">
@@ -366,9 +414,9 @@ const GameDetailPage = () => {
                   </span>
                 </div>
               </div>
-            </div>
           </div>
-        </motion.div>
+        </div>
+      </motion.div>
       </div>
     </>
   );

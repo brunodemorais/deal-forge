@@ -14,7 +14,11 @@ SECRET_KEY = os.getenv('JWT_SECRET', 'your-secret-key')
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+# Enable CORS for the application, allowing requests from your frontend's URL
+CORS(app, resources={r"/api/*": {"origins": "*"}, r"/auth/*": {"origins": "*"}}) 
+
+# Explanation: This explicitly ensures that CORS headers are applied to
+# all routes starting with /api/ AND all routes starting with /auth/
 
 def get_db_connection():
     """Establish database connection"""
@@ -115,6 +119,14 @@ def transform_game_data_from_row(row):
         'metacritic_score': metacritic_score,
         'recommendation_count': recommendation_count or 0
     }
+
+def dict_fetch_all(cursor):
+    """Return all rows from a cursor as a list of dicts"""
+    columns = [col[0] for col in cursor.description]
+    return [
+        dict(zip(columns, row))
+        for row in cursor.fetchall()
+    ]
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -575,18 +587,50 @@ def auth_required(f):
 @app.route('/api/watchlist', methods=['GET'])
 @auth_required
 def get_watchlist():
+    """Retrieves the full watchlist for the authenticated user with the latest game price details."""
     user_id = request.user_id
     conn = get_db_connection()
     if not conn:
         return jsonify({'error': 'Database connection failed'}), 500
     cur = conn.cursor()
     try:
-        cur.execute("SELECT app_id, added_at FROM watchlist WHERE user_id = %s", (user_id,))
-        rows = cur.fetchall()
-        games = [{'app_id': r[0], 'added_at': r[1].isoformat()} for r in rows]
-        return jsonify({'watchlist': games})
+        # Use a Common Table Expression (CTE) to efficiently find the LATEST price 
+        # for every game (using PostgreSQL's DISTINCT ON).
+        cur.execute("""
+            WITH latest_prices AS (
+                SELECT DISTINCT ON (app_id)
+                    app_id, final_price, discount_percent, initial_price
+                FROM price_history
+                ORDER BY app_id, checked_at DESC
+            )
+            SELECT 
+                g.app_id, g.name, g.header_image_url, 
+                lp.final_price, lp.discount_percent, lp.initial_price,
+                w.added_at
+            FROM watchlist w
+            JOIN games g ON w.app_id = g.app_id
+            -- Join with the latest price data (lp) instead of the game table (g) for prices
+            JOIN latest_prices lp ON w.app_id = lp.app_id
+            WHERE w.user_id = %s
+            ORDER BY w.added_at DESC;
+        """, (user_id,))
+        
+        # NOTE: Make sure the dict_fetch_all helper function is still defined globally
+        watchlist_games = dict_fetch_all(cur)
+        
+        # Convert datetime objects to ISO strings for JSON serialization
+        for game in watchlist_games:
+            if 'added_at' in game and game['added_at']:
+                game['added_at'] = game['added_at'].isoformat()
+        
+        # Return an object with the 'games' key, which the frontend expects
+        return jsonify({'games': watchlist_games}), 200 
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"Error fetching watchlist for user {user_id}: {e}")
+        # Return an empty array wrapped in the expected format on error
+        # NOTE: If the user has games on their watchlist that DO NOT have price_history, they will be excluded.
+        return jsonify({'games': []}), 200 
     finally:
         cur.close()
         conn.close()

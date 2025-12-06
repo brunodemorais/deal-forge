@@ -16,7 +16,7 @@ export const AuthProvider = ({ children }) => {
       if (token) {
         try {
           // Verify token and get user info from backend
-          const userData = await apiClient.get('/auth/me');
+          const userData = await apiClient.get('/api/auth/me');
           setUser(userData);
         } catch (error) {
           console.error("Token invalid or expired", error);
@@ -31,12 +31,12 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      const data = await apiClient.post('/auth/login', { email, password });
+      const data = await apiClient.post('/api/auth/login', { email, password });
       
       if (data.token) {
         localStorage.setItem('token', data.token);
-        // If login returns user data, use it. Otherwise fetch /auth/me
-        const userData = data.user || await apiClient.get('/auth/me');
+        // If login returns user data, use it. Otherwise fetch /api/auth/me
+        const userData = data.user || await apiClient.get('/api/auth/me');
         setUser(userData);
         return { error: null };
       }
@@ -48,7 +48,7 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (email, password) => {
     try {
-      await apiClient.post('/auth/register', { email, password });
+      await apiClient.post('/api/auth/register', { email, password });
       // Automatically login after registration or let the user do it
       // For this implementation, we'll return success and let the UI handle the redirect
       return { error: null };
